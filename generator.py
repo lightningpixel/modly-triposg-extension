@@ -87,7 +87,7 @@ class TripoSGGenerator(BaseGenerator):
         seed            = int(params.get("seed", 42))
         faces           = int(params.get("faces", -1))
         fg_ratio        = float(params.get("foreground_ratio", 0.85))
-        octree_depth    = int(params.get("octree_depth", 9))
+        use_flash       = bool(params.get("use_flash_decoder", True))
 
         # Preprocessing
         self._report(progress_cb, 5, "Removing background...")
@@ -114,8 +114,7 @@ class TripoSGGenerator(BaseGenerator):
                     generator=generator,
                     num_inference_steps=num_steps,
                     guidance_scale=guidance_scale,
-                    flash_octree_depth=octree_depth,
-                    hierarchical_octree_depth=octree_depth,
+                    use_flash_decoder=use_flash,
                 ).samples[0]
         finally:
             stop_evt.set()
@@ -278,12 +277,10 @@ class TripoSGGenerator(BaseGenerator):
                 "tooltip": "Seed for reproducibility. Click shuffle for a random seed.",
             },
             {
-                "id":      "octree_depth",
-                "label":   "Mesh Resolution",
-                "type":    "int",
-                "default": 9,
-                "min":     7,
-                "max":     9,
-                "tooltip": "Octree depth for mesh extraction. 9 = 512³ grid (recommended). 8 = faster but less detail. 7 = low quality.",
+                "id":      "use_flash_decoder",
+                "label":   "Flash Decoder",
+                "type":    "bool",
+                "default": True,
+                "tooltip": "DiffDMC (activé) est plus rapide et produit un mesh watertight. Désactiver pour utiliser Marching Cubes, qui gère mieux les géométries complexes avec des trous ou des creux profonds.",
             },
         ]
