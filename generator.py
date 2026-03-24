@@ -88,9 +88,6 @@ class TripoSGGenerator(BaseGenerator):
         faces           = int(params.get("faces", -1))
         fg_ratio        = float(params.get("foreground_ratio", 0.85))
         octree_depth    = int(params.get("octree_depth", 9))
-        use_flash       = bool(params.get("use_flash_decoder", True))
-        bounds_val      = float(params.get("bounds", 1.005))
-        bounds          = (-bounds_val, -bounds_val, -bounds_val, bounds_val, bounds_val, bounds_val)
 
         # Preprocessing
         self._report(progress_cb, 5, "Removing background...")
@@ -117,10 +114,8 @@ class TripoSGGenerator(BaseGenerator):
                     generator=generator,
                     num_inference_steps=num_steps,
                     guidance_scale=guidance_scale,
-                    use_flash_decoder=use_flash,
                     flash_octree_depth=octree_depth,
                     hierarchical_octree_depth=octree_depth,
-                    bounds=bounds,
                 ).samples[0]
         finally:
             stop_evt.set()
@@ -290,22 +285,5 @@ class TripoSGGenerator(BaseGenerator):
                 "min":     7,
                 "max":     9,
                 "tooltip": "Octree depth for mesh extraction. 9 = 512³ grid (recommended). 8 = faster but less detail. 7 = low quality.",
-            },
-            {
-                "id":      "use_flash_decoder",
-                "label":   "Flash Decoder",
-                "type":    "bool",
-                "default": True,
-                "tooltip": "Use the DiffDMC flash decoder (faster, watertight quads). Disable to use marching cubes instead, which can handle complex thin geometry differently.",
-            },
-            {
-                "id":      "bounds",
-                "label":   "Bounds",
-                "type":    "float",
-                "default": 1.005,
-                "min":     1.0,
-                "max":     1.5,
-                "step":    0.005,
-                "tooltip": "Bounding volume radius for SDF evaluation. Increase if the model gets clipped at the edges.",
             },
         ]
