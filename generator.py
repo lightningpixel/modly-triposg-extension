@@ -82,11 +82,15 @@ class TripoSGGenerator(BaseGenerator):
         import torch
         import trimesh
 
-        num_steps      = int(params.get("num_inference_steps", 50))
-        guidance_scale = float(params.get("guidance_scale", 7.0))
-        seed           = int(params.get("seed", 42))
-        faces          = int(params.get("faces", -1))
-        fg_ratio       = float(params.get("foreground_ratio", 0.85))
+        num_steps       = int(params.get("num_inference_steps", 50))
+        guidance_scale  = float(params.get("guidance_scale", 7.0))
+        seed            = int(params.get("seed", 42))
+        faces           = int(params.get("faces", -1))
+        fg_ratio        = float(params.get("foreground_ratio", 0.85))
+        octree_depth    = int(params.get("octree_depth", 9))
+        use_flash       = bool(params.get("use_flash_decoder", True))
+        bounds_val      = float(params.get("bounds", 1.005))
+        bounds          = (-bounds_val, -bounds_val, -bounds_val, bounds_val, bounds_val, bounds_val)
 
         # Preprocessing
         self._report(progress_cb, 5, "Removing background...")
@@ -113,6 +117,10 @@ class TripoSGGenerator(BaseGenerator):
                     generator=generator,
                     num_inference_steps=num_steps,
                     guidance_scale=guidance_scale,
+                    use_flash_decoder=use_flash,
+                    flash_octree_depth=octree_depth,
+                    hierarchical_octree_depth=octree_depth,
+                    bounds=bounds,
                 ).samples[0]
         finally:
             stop_evt.set()
@@ -273,5 +281,31 @@ class TripoSGGenerator(BaseGenerator):
                 "min":     0,
                 "max":     2147483647,
                 "tooltip": "Seed for reproducibility. Click shuffle for a random seed.",
+            },
+            {
+                "id":      "octree_depth",
+                "label":   "Mesh Resolution",
+                "type":    "int",
+                "default": 9,
+                "min":     7,
+                "max":     10,
+                "tooltip": "Octree depth for mesh extraction. 9 = 512³ grid, 10 = 1024³ (more detail, much more VRAM). 8 = faster/lower quality.",
+            },
+            {
+                "id":      "use_flash_decoder",
+                "label":   "Flash Decoder",
+                "type":    "bool",
+                "default": True,
+                "tooltip": "Use the DiffDMC flash decoder (faster, watertight quads). Disable to use marching cubes instead, which can handle complex thin geometry differently.",
+            },
+            {
+                "id":      "bounds",
+                "label":   "Bounds",
+                "type":    "float",
+                "default": 1.005,
+                "min":     1.0,
+                "max":     1.5,
+                "step":    0.005,
+                "tooltip": "Bounding volume radius for SDF evaluation. Increase if the model gets clipped at the edges.",
             },
         ]
