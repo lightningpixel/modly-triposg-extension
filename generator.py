@@ -280,7 +280,10 @@ class TripoSGGenerator(BaseGenerator):
                 "id":      "use_flash_decoder",
                 "label":   "Decoder",
                 "type":    "select",
-                "options": ["DiffDMC", "Marching Cubes"],
+                "options": [
+                    {"value": "DiffDMC",         "label": "DiffDMC"},
+                    {"value": "Marching Cubes",  "label": "Marching Cubes"},
+                ],
                 "default": "DiffDMC",
                 "tooltip": "DiffDMC est plus rapide et produit un mesh watertight. Marching Cubes gère mieux les géométries complexes avec des trous ou des creux profonds.",
             },
