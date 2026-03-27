@@ -14,7 +14,6 @@ To rebuild vendor/ (pure-Python part only):
     python build_vendor.py   (run once with the app's venv active)
 """
 import io
-import sys
 import time
 import threading
 import uuid
@@ -27,7 +26,6 @@ from PIL import Image
 from services.generators.base import BaseGenerator, smooth_progress, GenerationCancelled
 
 _EXTENSION_DIR = Path(__file__).parent
-_VENDOR_DIR    = _EXTENSION_DIR / "vendor"
 
 
 class TripoSGGenerator(BaseGenerator):
@@ -151,27 +149,17 @@ class TripoSGGenerator(BaseGenerator):
     # ------------------------------------------------------------------ #
 
     def _setup_vendor(self) -> None:
-        if not _VENDOR_DIR.exists():
-            raise RuntimeError(
-                f"[TripoSGGenerator] vendor/ directory not found at {_VENDOR_DIR}.\n"
-                "Run 'python build_vendor.py' from the extension directory to build it."
-            )
-
         # Import torch first so it registers its DLL directory on Windows.
         # diso's _C.pyd depends on torch_python.dll — without this, Windows
         # cannot find it even if the path is correct.
         import torch  # noqa: F401
 
-        vendor_str = str(_VENDOR_DIR)
-        if vendor_str not in sys.path:
-            sys.path.insert(0, vendor_str)
-
         try:
             from triposg.pipelines.pipeline_triposg import TripoSGPipeline  # noqa: F401
         except ImportError as exc:
             raise RuntimeError(
-                f"[TripoSGGenerator] vendor/ is incomplete: {exc}\n"
-                "Re-run 'python build_vendor.py' to rebuild it."
+                "[TripoSGGenerator] triposg not found. "
+                "Run the extension setup from the Models page."
             ) from exc
 
     # ------------------------------------------------------------------ #

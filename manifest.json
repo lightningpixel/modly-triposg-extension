@@ -20,5 +20,65 @@
       "description": "Flow matching diffusion model for high-quality single-image 3D reconstruction (~8GB)"
     }
   ],
+  "params_schema": [
+    {
+      "id": "num_inference_steps",
+      "label": "Inference Steps",
+      "type": "int",
+      "default": 50,
+      "min": 8,
+      "max": 50,
+      "tooltip": "Number of diffusion steps. More steps = better quality but slower."
+    },
+    {
+      "id": "guidance_scale",
+      "label": "CFG Scale",
+      "type": "float",
+      "default": 7.0,
+      "min": 0.0,
+      "max": 20.0,
+      "step": 0.5,
+      "tooltip": "Classifier-free guidance strength. Higher = closer to the input image."
+    },
+    {
+      "id": "foreground_ratio",
+      "label": "Foreground Ratio",
+      "type": "float",
+      "default": 0.85,
+      "min": 0.5,
+      "max": 1.0,
+      "step": 0.05,
+      "tooltip": "How much of the canvas the subject fills after background removal."
+    },
+    {
+      "id": "faces",
+      "label": "Max Faces",
+      "type": "int",
+      "default": -1,
+      "min": -1,
+      "max": 500000,
+      "tooltip": "Target face count for mesh simplification. -1 to disable."
+    },
+    {
+      "id": "seed",
+      "label": "Seed",
+      "type": "int",
+      "default": 42,
+      "min": 0,
+      "max": 2147483647,
+      "tooltip": "Seed for reproducibility. Click shuffle for a random seed."
+    },
+    {
+      "id": "use_flash_decoder",
+      "label": "Decoder",
+      "type": "select",
+      "default": "DiffDMC",
+      "options": [
+        { "value": "DiffDMC", "label": "DiffDMC" },
+        { "value": "Marching Cubes", "label": "Marching Cubes" }
+      ],
+      "tooltip": "DiffDMC is faster and produces a watertight mesh. Marching Cubes handles complex geometries better."
+    }
+  ],
   "signature": "O7aC0lnf6iMk2fYXm9TwNcDvHi75m36gGHwTSflZXkul9+2RKClqYUeJrkrv5rOJBuRYXgNNhkf2/vXHPIm6Cw=="
 }

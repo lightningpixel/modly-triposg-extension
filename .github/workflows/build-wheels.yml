@@ -1,0 +1,146 @@
+name: Build diso wheels
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release tag (e.g. v1.0.0)"
+        required: true
+        default: "v1.0.0"
+
+jobs:
+  build:
+    name: ${{ matrix.os }} · torch${{ matrix.torch }} · cu${{ matrix.cuda }}
+    runs-on: ${{ matrix.os }}
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Windows — CUDA 12.4 (Ampere/Ada, SM ≥ 70)
+          - os: windows-latest
+            torch: "2.6.0"
+            torchvision: "0.21.0"
+            cuda: "124"
+            torch_index: "https://download.pytorch.org/whl/cu124"
+            cuda_toolkit: "12.4.1"
+
+          # Windows — CUDA 11.8 (Pascal, SM 6.x)
+          - os: windows-latest
+            torch: "2.5.1"
+            torchvision: "0.20.1"
+            cuda: "118"
+            torch_index: "https://download.pytorch.org/whl/cu118"
+            cuda_toolkit: "11.8.0"
+
+          # Linux — CUDA 12.4
+          - os: ubuntu-22.04
+            torch: "2.6.0"
+            torchvision: "0.21.0"
+            cuda: "124"
+            torch_index: "https://download.pytorch.org/whl/cu124"
+            cuda_toolkit: "12.4.1"
+
+          # Linux — CUDA 11.8
+          - os: ubuntu-22.04
+            torch: "2.5.1"
+            torchvision: "0.20.1"
+            cuda: "118"
+            torch_index: "https://download.pytorch.org/whl/cu118"
+            cuda_toolkit: "11.8.0"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install CUDA Toolkit
+        uses: Jimver/cuda-toolkit@v0.2.19
+        with:
+          cuda: ${{ matrix.cuda_toolkit }}
+          method: network
+
+      # Activate MSVC so cl.exe is in PATH — required for CUDA extension builds on Windows
+      - name: Activate MSVC (Windows only)
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install PyTorch
+        shell: bash
+        run: pip install torch==${{ matrix.torch }} torchvision==${{ matrix.torchvision }} --index-url ${{ matrix.torch_index }}
+
+      - name: Install build tools
+        shell: bash
+        run: pip install setuptools wheel ninja cmake "pybind11[global]"
+
+      - name: Create output directory
+        shell: bash
+        run: mkdir -p wheel-out
+
+      - name: Try pre-built diso from PyPI
+        id: pypi
+        continue-on-error: true
+        shell: bash
+        run: |
+          pip download diso --only-binary :all: --dest ./wheel-out
+          echo "found=true" >> $GITHUB_OUTPUT
+
+      - name: Build diso from source
+        if: steps.pypi.outputs.found != 'true'
+        shell: bash
+        env:
+          FORCE_CUDA: "1"
+          CUDAFLAGS: "-allow-unsupported-compiler"
+          CMAKE_CUDA_FLAGS: "-allow-unsupported-compiler"
+        run: |
+          git clone --depth=1 https://github.com/SarahWeiii/diso.git diso-src
+          cd diso-src
+          pip wheel --no-deps --no-build-isolation -w ../wheel-out .
+
+      - name: Rename wheel with torch+cuda suffix
+        shell: python
+        run: |
+          import glob, os, platform, sys
+          wheels = glob.glob("wheel-out/diso*.whl")
+          if not wheels:
+              sys.exit("No diso wheel found in wheel-out/")
+          src = wheels[0]
+          # Standard wheel format: {name}-{version}-{pytag}-{abitag}-{platformtag}.whl
+          # We discard version and platform tag and rebuild a canonical name so that
+          # setup.py can construct the exact same string without knowing diso's version.
+          parts = os.path.basename(src)[:-4].split("-")
+          py_tag  = parts[2] if len(parts) >= 5 else "cp311"
+          abi_tag = parts[3] if len(parts) >= 5 else "cp311"
+          plat    = "win_amd64" if platform.system() == "Windows" else "linux_x86_64"
+          dst_name = f"diso_torch${{ matrix.torch }}_cu${{ matrix.cuda }}-{py_tag}-{abi_tag}-{plat}.whl"
+          os.rename(src, os.path.join("wheel-out", dst_name))
+          print(f"Renamed to: {dst_name}")
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: diso-torch${{ matrix.torch }}-cu${{ matrix.cuda }}-${{ matrix.os }}
+          path: wheel-out/*.whl
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: wheels
+          merge-multiple: true
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.version }}
+          name: ${{ github.event.inputs.version }}
+          files: wheels/**/*.whl
+          body: |
+            Pre-compiled diso wheels for TripoSG extension.
+            Naming: `diso_torch{version}_cu{cuda}-{python}-{platform}.whl`
