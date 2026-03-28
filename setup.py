@@ -77,7 +77,7 @@ def install_diso(venv: Path, torch_ver: str, cuda_tag: str) -> None:
     # Fallback 2: build from source
     print("[setup] Building diso from source (requires CUDA toolchain) …")
     pip(venv, "install", "setuptools", "wheel", "ninja", "cmake", "pybind11")
-    pip(venv, "install", "git+https://github.com/SarahWeiii/diso.git")
+    pip(venv, "install", "--no-build-isolation", "git+https://github.com/SarahWeiii/diso.git")
     print("[setup] diso built and installed from source.")
 
 
@@ -132,7 +132,8 @@ def setup(python_exe: str, ext_dir: Path, gpu_sm: int) -> None:
     # ------------------------------------------------------------------ #
     # PyTorch
     # ------------------------------------------------------------------ #
-    if gpu_sm >= 70:
+    # gpu_sm == 0 means detection failed — default to cu124 (modern GPU assumed)
+    if gpu_sm == 0 or gpu_sm >= 70:
         torch_ver   = "2.6.0"
         torch_index = "https://download.pytorch.org/whl/cu124"
         torch_pkgs  = ["torch==2.6.0", "torchvision==0.21.0"]
