@@ -99,6 +99,7 @@ jobs:
           CUDAFLAGS: "-allow-unsupported-compiler"
           CMAKE_CUDA_FLAGS: "-allow-unsupported-compiler"
           TORCH_CUDA_ARCH_LIST: ${{ matrix.arch_list }}
+          DISTUTILS_USE_SDK: "1"
         run: |
           git clone --depth=1 https://github.com/SarahWeiii/diso.git diso-src
           cd diso-src
