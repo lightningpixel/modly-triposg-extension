@@ -91,17 +91,43 @@ jobs:
           pip download diso --only-binary :all: --dest ./wheel-out
           echo "found=true" >> $GITHUB_OUTPUT
 
-      - name: Build diso from source
+      - name: Clone diso
+        if: steps.pypi.outputs.found != 'true'
+        shell: bash
+        run: git clone --depth=1 https://github.com/SarahWeiii/diso.git diso-src
+
+      # Inject -allow-unsupported-compiler into nvcc extra_compile_args so that
+      # CUDA 11.8/12.x can build against VS 2022 17.14+ (too new for nvcc's check).
+      # CUDAFLAGS is not forwarded to nvcc on Windows — the flag must be in setup.py.
+      - name: Patch diso setup.py (Windows)
+        if: steps.pypi.outputs.found != 'true' && runner.os == 'Windows'
+        shell: python
+        run: |
+          from pathlib import Path
+          p = Path("diso-src/setup.py")
+          patch = (
+              "try:\n"
+              "    import torch.utils.cpp_extension as _ext\n"
+              "    _orig = _ext.CUDAExtension\n"
+              "    def _patched(*a, **kw):\n"
+              "        eca = kw.setdefault('extra_compile_args', {})\n"
+              "        if isinstance(eca, dict): eca.setdefault('nvcc', []).append('-allow-unsupported-compiler')\n"
+              "        elif isinstance(eca, list): eca.append('-allow-unsupported-compiler')\n"
+              "        return _orig(*a, **kw)\n"
+              "    _ext.CUDAExtension = _patched\n"
+              "except Exception: pass\n"
+          )
+          p.write_text(patch + p.read_text())
+          print("Patched diso setup.py with -allow-unsupported-compiler")
+
+      - name: Build diso wheel
         if: steps.pypi.outputs.found != 'true'
         shell: bash
         env:
           FORCE_CUDA: "1"
-          CUDAFLAGS: "-allow-unsupported-compiler"
-          CMAKE_CUDA_FLAGS: "-allow-unsupported-compiler"
           TORCH_CUDA_ARCH_LIST: ${{ matrix.arch_list }}
           DISTUTILS_USE_SDK: "1"
         run: |
-          git clone --depth=1 https://github.com/SarahWeiii/diso.git diso-src
           cd diso-src
           pip wheel --no-deps --no-build-isolation -w ../wheel-out .
 
