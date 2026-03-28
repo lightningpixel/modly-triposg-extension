@@ -17,13 +17,14 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Windows — CUDA 12.4 (Ampere/Ada, SM ≥ 70)
+          # Windows — CUDA 12.4 (Ampere/Ada/Hopper, SM ≥ 70)
           - os: windows-latest
             torch: "2.6.0"
             torchvision: "0.21.0"
             cuda: "124"
             torch_index: "https://download.pytorch.org/whl/cu124"
             cuda_toolkit: "12.4.1"
+            arch_list: "7.0;7.5;8.0;8.6;9.0"
 
           # Windows — CUDA 11.8 (Pascal, SM 6.x)
           - os: windows-latest
@@ -32,6 +33,7 @@ jobs:
             cuda: "118"
             torch_index: "https://download.pytorch.org/whl/cu118"
             cuda_toolkit: "11.8.0"
+            arch_list: "6.1;7.0;7.5;8.0;8.6"
 
           # Linux — CUDA 12.4
           - os: ubuntu-22.04
@@ -40,6 +42,7 @@ jobs:
             cuda: "124"
             torch_index: "https://download.pytorch.org/whl/cu124"
             cuda_toolkit: "12.4.1"
+            arch_list: "7.0;7.5;8.0;8.6;9.0"
 
           # Linux — CUDA 11.8
           - os: ubuntu-22.04
@@ -48,6 +51,7 @@ jobs:
             cuda: "118"
             torch_index: "https://download.pytorch.org/whl/cu118"
             cuda_toolkit: "11.8.0"
+            arch_list: "6.1;7.0;7.5;8.0;8.6"
 
     steps:
       - uses: actions/checkout@v4
@@ -94,6 +98,7 @@ jobs:
           FORCE_CUDA: "1"
           CUDAFLAGS: "-allow-unsupported-compiler"
           CMAKE_CUDA_FLAGS: "-allow-unsupported-compiler"
+          TORCH_CUDA_ARCH_LIST: ${{ matrix.arch_list }}
         run: |
           git clone --depth=1 https://github.com/SarahWeiii/diso.git diso-src
           cd diso-src
