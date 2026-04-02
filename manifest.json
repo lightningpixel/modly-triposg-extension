@@ -9,7 +9,7 @@
   "tags": ["image-to-3d", "high-quality", "diffusion"],
   "nodes": [
     {
-      "id": "triposg",
+      "id": "generate",
       "name": "TripoSG",
       "input": "image",
       "output": "mesh",

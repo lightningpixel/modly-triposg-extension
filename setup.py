@@ -6,7 +6,7 @@ diso pre-compiled wheels are fetched from the extension's GitHub Release.
 triposg source is installed directly from GitHub into the venv.
 
 Called by Modly at extension install time with:
-    python setup.py '{"python_exe":"...","ext_dir":"...","gpu_sm":86}'
+    python setup.py '{"python_exe":"...","ext_dir":"...","gpu_sm":86,"cuda_version":124}'
 """
 import io
 import json
@@ -145,23 +145,35 @@ def install_triposg(venv: Path) -> None:
     print(f"[setup] triposg installed to {site_packages}.")
 
 
-def setup(python_exe: str, ext_dir: Path, gpu_sm: int) -> None:
+def setup(python_exe: str, ext_dir: Path, gpu_sm: int, cuda_version: int = 0) -> None:
     venv = ext_dir / "venv"
 
     print(f"[setup] Creating venv at {venv} …")
     subprocess.run([python_exe, "-m", "venv", str(venv)], check=True)
 
     # ------------------------------------------------------------------ #
-    # PyTorch
+    # PyTorch — select build based on GPU architecture + CUDA driver
     # ------------------------------------------------------------------ #
-    # gpu_sm == 0 means detection failed — default to cu124 (modern GPU assumed)
-    if gpu_sm == 0 or gpu_sm >= 70:
+    # sm_120+ = Blackwell (RTX 50xx): requires cu128 + torch 2.6+
+    # sm_70+  = Ampere/Ada/Hopper: cu124 covers all, but prefer cu128 if
+    #           the driver supports it (cuda_version >= 128)
+    # sm < 70 = legacy (Pascal and older): cu118
+    if gpu_sm >= 100 or cuda_version >= 128:
+        # Blackwell (RTX 50xx, H100 NVL, B100 …) — kernels only in cu128 builds
+        torch_ver   = "2.6.0"
+        torch_index = "https://download.pytorch.org/whl/cu128"
+        torch_pkgs  = ["torch==2.6.0", "torchvision==0.21.0"]
+        cuda_tag    = "128"
+        print(f"[setup] GPU SM {gpu_sm}, CUDA {cuda_version} -> PyTorch 2.6 + CUDA 12.8 (Blackwell)")
+    elif gpu_sm == 0 or gpu_sm >= 70:
+        # Ampere / Ada Lovelace / Hopper — cu124 is the safe choice
         torch_ver   = "2.6.0"
         torch_index = "https://download.pytorch.org/whl/cu124"
         torch_pkgs  = ["torch==2.6.0", "torchvision==0.21.0"]
         cuda_tag    = "124"
         print(f"[setup] GPU SM {gpu_sm} -> PyTorch 2.6 + CUDA 12.4")
     else:
+        # Pascal / Volta / Turing (sm_60–sm_75) — cu118
         torch_ver   = "2.5.1"
         torch_index = "https://download.pytorch.org/whl/cu118"
         torch_pkgs  = ["torch==2.5.1", "torchvision==0.20.1"]
@@ -221,8 +233,13 @@ if __name__ == "__main__":
         setup(sys.argv[1], Path(sys.argv[2]), int(sys.argv[3]))
     elif len(sys.argv) == 2:
         args = json.loads(sys.argv[1])
-        setup(args["python_exe"], Path(args["ext_dir"]), int(args["gpu_sm"]))
+        setup(
+            args["python_exe"],
+            Path(args["ext_dir"]),
+            int(args.get("gpu_sm", 86)),
+            int(args.get("cuda_version", 0)),
+        )
     else:
         print("Usage: python setup.py <python_exe> <ext_dir> <gpu_sm>")
-        print('   or: python setup.py \'{"python_exe":"...","ext_dir":"...","gpu_sm":86}\'')
+        print('   or: python setup.py \'{"python_exe":"...","ext_dir":"...","gpu_sm":86,"cuda_version":124}\'')
         sys.exit(1)
