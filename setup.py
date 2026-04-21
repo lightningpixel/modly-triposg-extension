@@ -205,6 +205,7 @@ def setup(python_exe: str, ext_dir: Path, gpu_sm: int, cuda_version: int = 0) ->
         "diffusers>=0.31.0",
         "transformers>=4.46.0",
         "accelerate",
+        "safetensors",
     )
 
     # ------------------------------------------------------------------ #
@@ -212,7 +213,11 @@ def setup(python_exe: str, ext_dir: Path, gpu_sm: int, cuda_version: int = 0) ->
     # ------------------------------------------------------------------ #
     print("[setup] Installing rembg …")
     if gpu_sm >= 70:
-        pip(venv, "install", "rembg[gpu]")
+        pip(venv, "install", "rembg")
+        try:
+            pip(venv, "install", "onnxruntime-gpu")
+        except subprocess.CalledProcessError:
+            pip(venv, "install", "onnxruntime")
     else:
         pip(venv, "install", "rembg", "onnxruntime")
 

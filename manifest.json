@@ -3,7 +3,7 @@
   "name": "TripoSG",
   "source": "https://github.com/lightningpixel/modly-triposg-extension",
   "description": "High-quality image-to-3D via flow matching diffusion. Sharper geometry and finer details than TripoSR. Requires ~8GB VRAM.",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "author": "Lightning Pixel",
   "generator_class": "TripoSGGenerator",
   "tags": ["image-to-3d", "high-quality", "diffusion"],
