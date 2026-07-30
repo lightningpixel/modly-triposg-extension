@@ -39,12 +39,63 @@ def python_tag(venv: Path) -> str:
     return out
 
 
+_DISO_STUB = '''"""
+Stub diso package for platforms without a CUDA GPU.
+
+diso (https://github.com/SarahWeiii/diso) is a CUDA-compiled marching-cubes
+alternative used by TripoSG's DiffDMC decoder. It has no CPU/MPS backend, so
+on macOS/CPU-only machines we can't install the real thing — but triposg's
+inference_utils imports `DiffDMC` unconditionally at module level, so the
+package must still exist and be importable. TripoSGGenerator never actually
+calls DiffDMC on non-CUDA devices (it falls back to Marching Cubes), so this
+stub only needs to satisfy the import; it raises only if something tries to
+use it anyway.
+"""
+
+
+class DiffDMC:
+    def __init__(self, *args, **kwargs):
+        raise RuntimeError(
+            "diso/DiffDMC requires a CUDA GPU and is not available on this "
+            "platform. Use the Marching Cubes decoder instead."
+        )
+'''
+
+
+def install_diso_stub(venv: Path) -> None:
+    """Installs a stub diso package (see _DISO_STUB) so imports succeed on
+    platforms where the real, CUDA-only diso cannot be installed."""
+    is_win = platform.system() == "Windows"
+    exe    = venv / ("Scripts/python.exe" if is_win else "bin/python")
+
+    site_packages = subprocess.check_output(
+        [str(exe), "-c",
+         "import site; print([p for p in site.getsitepackages() if 'site-packages' in p][0])"],
+        text=True,
+    ).strip()
+    diso_dest = Path(site_packages) / "diso"
+
+    if diso_dest.exists():
+        print("[setup] diso already present, skipping.")
+        return
+
+    diso_dest.mkdir(parents=True, exist_ok=True)
+    (diso_dest / "__init__.py").write_text(_DISO_STUB)
+    print("[setup] Installed diso stub (no CUDA on this platform — Marching Cubes will be used).")
+
+
 def install_diso(venv: Path, torch_ver: str, cuda_tag: str) -> None:
     """
     Downloads the pre-built diso wheel from GitHub Release and extracts the
     diso/ package directly into site-packages (bypasses pip wheel validation).
     Falls back to building from source if the wheel is not available.
     """
+    if platform.system() == "Darwin":
+        # diso ships prebuilt wheels for win_amd64/linux_x86_64 only, and it's
+        # a CUDA-only extension anyway — there is nothing valid to install here.
+        install_diso_stub(venv)
+        return
+
     is_win  = platform.system() == "Windows"
     py_tag  = python_tag(venv)
     plat    = "win_amd64" if is_win else "linux_x86_64"
@@ -146,7 +197,8 @@ def install_triposg(venv: Path) -> None:
 
 
 def setup(python_exe: str, ext_dir: Path, gpu_sm: int, cuda_version: int = 0) -> None:
-    venv = ext_dir / "venv"
+    venv   = ext_dir / "venv"
+    is_mac = platform.system() == "Darwin"
 
     print(f"[setup] Creating venv at {venv} …")
     subprocess.run([python_exe, "-m", "venv", str(venv)], check=True)
@@ -154,11 +206,18 @@ def setup(python_exe: str, ext_dir: Path, gpu_sm: int, cuda_version: int = 0) ->
     # ------------------------------------------------------------------ #
     # PyTorch — select build based on GPU architecture + CUDA driver
     # ------------------------------------------------------------------ #
+    # macOS has no CUDA index to pick from — the standard PyPI wheel already
+    # includes the Metal (MPS) backend for Apple Silicon (and a CPU build
+    # on Intel Macs), so it's installed directly, no --index-url involved.
+    if is_mac:
+        torch_ver = torch_pkgs = cuda_tag = None  # unused by install_diso() on macOS
+        print("[setup] macOS -> PyTorch from standard PyPI (Metal/MPS backend)")
+        pip(venv, "install", "torch", "torchvision")
     # sm_120+ = Blackwell (RTX 50xx): requires cu128 + torch 2.6+
     # sm_70+  = Ampere/Ada/Hopper: cu124 covers all, but prefer cu128 if
     #           the driver supports it (cuda_version >= 128)
     # sm < 70 = legacy (Pascal and older): cu118
-    if gpu_sm >= 100 or cuda_version >= 128:
+    elif gpu_sm >= 100 or cuda_version >= 128:
         # Blackwell (RTX 50xx, H100 NVL, B100 …) — kernels only in cu128 builds
         # torch 2.6 is not published for cu128; minimum is 2.7.0
         torch_ver   = "2.7.0"
@@ -181,8 +240,9 @@ def setup(python_exe: str, ext_dir: Path, gpu_sm: int, cuda_version: int = 0) ->
         cuda_tag    = "118"
         print(f"[setup] GPU SM {gpu_sm} (legacy) -> PyTorch 2.5 + CUDA 11.8")
 
-    print("[setup] Installing PyTorch …")
-    pip(venv, "install", *torch_pkgs, "--index-url", torch_index)
+    if not is_mac:
+        print("[setup] Installing PyTorch …")
+        pip(venv, "install", *torch_pkgs, "--index-url", torch_index)
 
     # ------------------------------------------------------------------ #
     # Core dependencies

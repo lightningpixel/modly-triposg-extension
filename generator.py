@@ -8,7 +8,10 @@ Pure-Python dependencies (omegaconf, antlr4, jaxtyping, typeguard, triposg
 source) are bundled in vendor/.
 
 diso is a CUDA-compiled extension that must match the user's PyTorch version —
-it is installed automatically via pip on first load.
+it is installed by setup.py at extension install time. It has no CPU/MPS
+backend, so on non-CUDA platforms setup.py installs a stub instead and this
+generator forces the Marching Cubes decoder (see select_device() / generate()
+below).
 
 To rebuild vendor/ (pure-Python part only):
     python build_vendor.py   (run once with the app's venv active)
@@ -24,7 +27,9 @@ from typing import Callable, Optional
 import numpy as np
 from PIL import Image
 
-from services.generators.base import BaseGenerator, smooth_progress, GenerationCancelled
+from services.generators.base import (
+    BaseGenerator, smooth_progress, GenerationCancelled, select_device, select_dtype,
+)
 
 _EXTENSION_DIR = Path(__file__).parent
 
@@ -53,20 +58,23 @@ class TripoSGGenerator(BaseGenerator):
         import torch
         from triposg.pipelines.pipeline_triposg import TripoSGPipeline
 
-        device = "cuda:0" if torch.cuda.is_available() else "cpu"
-        dtype  = torch.float16 if torch.cuda.is_available() else torch.float32
+        device_kind = select_device()
+        device      = "cuda:0" if device_kind == "cuda" else device_kind
+        dtype       = select_dtype(device_kind)
 
         print(f"[TripoSGGenerator] Loading model from {self.model_dir}...")
         pipe = TripoSGPipeline.from_pretrained(str(self.model_dir)).to(device, dtype)
 
-        self._model  = pipe
-        self._device = device
-        self._dtype  = dtype
+        self._model       = pipe
+        self._device      = device
+        self._device_kind = device_kind
+        self._dtype       = dtype
         print(f"[TripoSGGenerator] Loaded on {device}.")
 
     def unload(self) -> None:
-        self._device = None
-        self._dtype  = None
+        self._device      = None
+        self._device_kind = None
+        self._dtype       = None
         super().unload()
 
     # ------------------------------------------------------------------ #
@@ -89,6 +97,13 @@ class TripoSGGenerator(BaseGenerator):
         faces           = int(params.get("faces", -1))
         fg_ratio        = float(params.get("foreground_ratio", 0.85))
         use_flash       = params.get("use_flash_decoder", "DiffDMC") == "DiffDMC"
+
+        if use_flash and self._device_kind != "cuda":
+            # diso (the DiffDMC decoder) is a CUDA-only compiled extension —
+            # not installed on MPS/CPU. Fall back to Marching Cubes.
+            print(f"[TripoSGGenerator] DiffDMC decoder needs CUDA; "
+                  f"falling back to Marching Cubes on {self._device_kind}.")
+            use_flash = False
 
         # Preprocessing
         self._report(progress_cb, 5, "Removing background...")
