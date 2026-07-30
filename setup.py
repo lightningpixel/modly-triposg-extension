@@ -154,6 +154,79 @@ def install_diso(venv: Path, torch_ver: str, cuda_tag: str) -> None:
     print("[setup] diso built and installed from source.")
 
 
+_INFERENCE_UTILS_CUDA_PATCHES = [
+    (
+        "torch.zeros(grid_size, grid_size, grid_size, device='cuda', dtype=torch.float16, requires_grad=False)",
+        "torch.zeros(grid_size, grid_size, grid_size, device=edge_coords.device, dtype=torch.float16, requires_grad=False)",
+    ),
+    (
+        "torch.cuda.empty_cache()",
+        "_empty_cache()",
+    ),
+    (
+        # max_pool3d has no MPS kernel at all (raises NotImplementedError even
+        # with PYTORCH_ENABLE_MPS_FALLBACK=1 unless it silently falls back to
+        # CPU, which is extremely slow on grids this large — 15-30+ min in
+        # practice). expanded_tensor only ever holds 0/1, so a k^3 max-pool
+        # is exactly conv3d with an all-ones kernel thresholded at >0 (binary
+        # dilation) — conv3d has a real MPS kernel, so this stays on-device.
+        "    if grid_size < 512:\n"
+        "        kernel_size = 5\n"
+        "        pooled_tensor = torch.nn.functional.max_pool3d(expanded_tensor.unsqueeze(0).unsqueeze(0), kernel_size=kernel_size, stride=1, padding=2).squeeze()\n"
+        "    else:\n"
+        "        kernel_size = 3\n"
+        "        pooled_tensor = torch.nn.functional.max_pool3d(expanded_tensor.unsqueeze(0).unsqueeze(0), kernel_size=kernel_size, stride=1, padding=1).squeeze()\n",
+        "    if grid_size < 512:\n"
+        "        kernel_size, padding = 5, 2\n"
+        "    else:\n"
+        "        kernel_size, padding = 3, 1\n"
+        "    _dilation_kernel = torch.ones(1, 1, kernel_size, kernel_size, kernel_size, device=expanded_tensor.device, dtype=expanded_tensor.dtype)\n"
+        "    _conv_out = torch.nn.functional.conv3d(expanded_tensor.unsqueeze(0).unsqueeze(0), _dilation_kernel, stride=1, padding=padding)\n"
+        "    pooled_tensor = (_conv_out > 0).squeeze().to(expanded_tensor.dtype)\n",
+    ),
+]
+
+
+def _patch_inference_utils_for_non_cuda(site_packages: Path) -> None:
+    """
+    triposg.inference_utils (vendored from upstream TripoSG, see
+    install_triposg() below) hardcodes CUDA — and one MPS-unimplemented op —
+    in its non-DiffDMC geometry extraction path, the one TripoSGGenerator
+    actually uses on MPS/CPU:
+      - expand_edge_region_fast() allocates with device='cuda' outright.
+      - Several torch.cuda.empty_cache() calls, which raise
+        "Torch not compiled with CUDA enabled" on a CUDA-less build.
+      - expand_edge_region_fast()'s binary dilation uses max_pool3d, which
+        has no MPS kernel and is very slow via the CPU fallback; rewritten
+        as an equivalent conv3d (see comment above) which does run on MPS.
+    All patches are applied unconditionally (not just on macOS) since they
+    only make the code correctly device-aware; they're a no-op on CUDA.
+    """
+    path = site_packages / "triposg" / "inference_utils.py"
+    text = path.read_text()
+
+    for old, new in _INFERENCE_UTILS_CUDA_PATCHES:
+        count = text.count(old)
+        if count == 0:
+            raise RuntimeError(
+                f"[setup] inference_utils.py patch failed: pattern not found "
+                f"({old!r}). Upstream TripoSG may have changed — update "
+                f"_INFERENCE_UTILS_CUDA_PATCHES in setup.py."
+            )
+        text = text.replace(old, new)
+
+    text = (
+        "import torch as _torch_device_check\n"
+        "def _empty_cache():\n"
+        "    if _torch_device_check.cuda.is_available():\n"
+        "        _torch_device_check.cuda.empty_cache()\n"
+        "    elif _torch_device_check.backends.mps.is_available():\n"
+        "        _torch_device_check.mps.empty_cache()\n\n\n"
+    ) + text
+    path.write_text(text)
+    print("[setup] Patched inference_utils.py for MPS/CPU device support.")
+
+
 def install_triposg(venv: Path) -> None:
     """
     Downloads TripoSG source from GitHub and installs the triposg package
@@ -192,6 +265,8 @@ def install_triposg(venv: Path) -> None:
             else:
                 target.parent.mkdir(parents=True, exist_ok=True)
                 target.write_bytes(zf.read(member))
+
+    _patch_inference_utils_for_non_cuda(Path(site_packages))
 
     print(f"[setup] triposg installed to {site_packages}.")
 
