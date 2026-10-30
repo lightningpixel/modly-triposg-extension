@@ -28,6 +28,14 @@ from services.generators.base import BaseGenerator, smooth_progress, GenerationC
 
 _EXTENSION_DIR = Path(__file__).parent
 
+# One rembg session per process (creating it costs ~20 s: model load + CUDA provider init).
+_REMBG = {"session": None}
+
+
+def _rembg_remove(image, session):
+    import rembg
+    return rembg.remove(image, session=session)
+
 
 class TripoSGGenerator(BaseGenerator):
     MODEL_ID     = "triposg"
@@ -63,6 +71,7 @@ class TripoSGGenerator(BaseGenerator):
         self._device = device
         self._dtype  = dtype
         print(f"[TripoSGGenerator] Loaded on {device}.")
+        self._rembg_session()
 
     def unload(self) -> None:
         self._device = None
@@ -175,16 +184,9 @@ class TripoSGGenerator(BaseGenerator):
     # ------------------------------------------------------------------ #
 
     def _preprocess(self, image_bytes: bytes, fg_ratio: float) -> Image.Image:
-        import rembg
-
         image   = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
-        try:
-            session = rembg.new_session()
-            image   = rembg.remove(image, session=session)
-        except Exception:
-            # cuDNN/CUDA incompatibility — fall back to CPU
-            session = rembg.new_session(providers=["CPUExecutionProvider"])
-            image   = rembg.remove(image, session=session)
+        session = self._rembg_session()
+        image   = _rembg_remove(image, session)
 
         # Composite on white background
         bg = Image.new("RGBA", image.size, (255, 255, 255, 255))
@@ -192,6 +194,21 @@ class TripoSGGenerator(BaseGenerator):
         image = bg.convert("RGB")
 
         return self._resize_foreground(image, fg_ratio)
+
+    def _rembg_session(self):
+        if _REMBG["session"] is None:
+            import rembg
+            try:
+                sess = rembg.new_session(providers=[("CUDAExecutionProvider", {
+                    "arena_extend_strategy": "kSameAsRequested", "gpu_mem_limit": 2 * 1024 ** 3,
+                    "cudnn_conv_algo_search": "HEURISTIC"}), "CPUExecutionProvider"])
+                _rembg_remove(Image.new("RGBA", (64, 64), (255, 255, 255, 255)), sess)  # warm-up / provider check
+            except Exception:
+                # cuDNN/CUDA incompatibility - fall back to CPU
+                sess = rembg.new_session(providers=["CPUExecutionProvider"])
+            print(f"[TripoSGGenerator] rembg providers: {sess.inner_session.get_providers()}")
+            _REMBG["session"] = sess
+        return _REMBG["session"]
 
     def _resize_foreground(self, image: Image.Image, ratio: float) -> Image.Image:
         """Scale the subject so it occupies `ratio` of the shortest canvas side."""
