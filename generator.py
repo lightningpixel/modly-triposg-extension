@@ -60,6 +60,10 @@ class TripoSGGenerator(BaseGenerator):
 
         import torch
         from triposg.pipelines.pipeline_triposg import TripoSGPipeline
+        # model_index.json names this module for the scheduler. Recent diffusers
+        # no longer import it on their own: it must already be in sys.modules.
+        # (The pipeline module already pulls in the transformer and the VAE.)
+        import triposg.schedulers.scheduling_rectified_flow  # noqa: F401
 
         device = "cuda:0" if torch.cuda.is_available() else "cpu"
         dtype  = torch.float16 if torch.cuda.is_available() else torch.float32
