@@ -27,9 +27,28 @@ from typing import Callable, Optional
 import numpy as np
 from PIL import Image
 
-from services.generators.base import (
-    BaseGenerator, smooth_progress, GenerationCancelled, select_device, select_dtype,
-)
+from services.generators.base import BaseGenerator, smooth_progress, GenerationCancelled
+
+try:
+    from services.generators.base import select_device, select_dtype
+except ImportError:
+    # Modly < 0.4.2 has no shared device helpers: same cuda -> mps -> cpu
+    # choice, so the extension keeps loading on older apps.
+    def select_device() -> str:
+        import os
+        import torch
+
+        if torch.cuda.is_available():
+            return "cuda"
+        if torch.backends.mps.is_available():
+            os.environ.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+            return "mps"
+        return "cpu"
+
+    def select_dtype(device: str):
+        import torch
+
+        return torch.float16 if device == "cuda" else torch.float32
 
 _EXTENSION_DIR = Path(__file__).parent
 
@@ -38,6 +57,8 @@ class TripoSGGenerator(BaseGenerator):
     MODEL_ID     = "triposg"
     DISPLAY_NAME = "TripoSG"
     VRAM_GB      = 8
+
+    _device_kind: Optional[str] = None  # "cuda" | "mps" | "cpu", set by load()
 
     # ------------------------------------------------------------------ #
     # Lifecycle
@@ -102,15 +123,15 @@ class TripoSGGenerator(BaseGenerator):
         fg_ratio        = float(params.get("foreground_ratio", 0.85))
         use_flash       = params.get("use_flash_decoder", "DiffDMC") == "DiffDMC"
 
+        # Preprocessing. DiffDMC (diso) is a CUDA-only compiled extension, not
+        # installed on MPS/CPU: fall back to Marching Cubes, and say so.
+        removing_bg = "Removing background..."
         if use_flash and self._device_kind != "cuda":
-            # diso (the DiffDMC decoder) is a CUDA-only compiled extension —
-            # not installed on MPS/CPU. Fall back to Marching Cubes.
+            use_flash   = False
+            removing_bg = "DiffDMC needs an NVIDIA GPU: using Marching Cubes. Removing background..."
             print(f"[TripoSGGenerator] DiffDMC decoder needs CUDA; "
                   f"falling back to Marching Cubes on {self._device_kind}.")
-            use_flash = False
-
-        # Preprocessing
-        self._report(progress_cb, 5, "Removing background...")
+        self._report(progress_cb, 5, removing_bg)
         image = self._preprocess(image_bytes, fg_ratio)
         self._check_cancelled(cancel_event)
 
@@ -312,6 +333,6 @@ class TripoSGGenerator(BaseGenerator):
                     {"value": "Marching Cubes",  "label": "Marching Cubes"},
                 ],
                 "default": "DiffDMC",
-                "tooltip": "DiffDMC is faster and produces a watertight mesh. Marching Cubes handles complex geometries with holes or deep cavities better.",
+                "tooltip": "DiffDMC is faster and produces a watertight mesh, but needs an NVIDIA GPU (Marching Cubes is used otherwise). Marching Cubes handles complex geometries with holes or deep cavities better.",
             },
         ]

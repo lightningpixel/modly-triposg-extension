@@ -21,7 +21,6 @@ Add them to the app's requirements.txt if not already present:
     scikit-image>=0.21.0
 """
 
-import io
 import os
 import shutil
 import subprocess
@@ -30,7 +29,6 @@ import zipfile
 from pathlib import Path
 
 VENDOR      = Path(__file__).parent / "vendor"
-TRIPOSG_ZIP = "https://github.com/VAST-AI-Research/TripoSG/archive/refs/heads/main.zip"
 DISO_REPO   = "https://github.com/SarahWeiii/diso.git"
 
 # Pure-Python packages to vendor (no compilation needed)
@@ -69,34 +67,14 @@ def vendor_pure_package(package: str, dest: Path) -> None:
 
 
 def vendor_triposg(dest: Path) -> None:
-    """Download TripoSG source and extract only the triposg/ package into vendor/."""
-    import urllib.request
+    """Install the same pinned, patched triposg/ package as setup.py into vendor/.
 
-    triposg_dest = dest / "triposg"
-    if triposg_dest.exists():
-        print("  triposg/ already present, skipping.")
-        return
+    vendor/ comes first on sys.path at load time, so an unpatched copy here
+    would shadow the one setup.py installed (and its MPS/CPU fixes).
+    """
+    from setup import install_triposg_source
 
-    print("  Downloading TripoSG source from GitHub...")
-    with urllib.request.urlopen(TRIPOSG_ZIP, timeout=180) as resp:
-        data = resp.read()
-
-    prefix = "TripoSG-main/triposg/"
-    strip  = "TripoSG-main/"
-
-    with zipfile.ZipFile(io.BytesIO(data)) as zf:
-        for member in zf.namelist():
-            if not member.startswith(prefix):
-                continue
-            rel    = member[len(strip):]
-            target = dest / rel
-            if member.endswith("/"):
-                target.mkdir(parents=True, exist_ok=True)
-            else:
-                target.parent.mkdir(parents=True, exist_ok=True)
-                target.write_bytes(zf.read(member))
-
-    print(f"  triposg/ extracted to {dest}.")
+    install_triposg_source(dest)
 
 
 def build_diso(dest: Path) -> None:
