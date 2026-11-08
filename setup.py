@@ -215,7 +215,10 @@ def setup(python_exe: str, ext_dir: Path, gpu_sm: int, cuda_version: int = 0) ->
     if gpu_sm >= 70:
         pip(venv, "install", "rembg")
         try:
-            pip(venv, "install", "onnxruntime-gpu")
+            # Pinned to a CUDA 12 + cuDNN 9 build: it uses the CUDA libraries
+            # torch has already loaded. Newer builds target CUDA 13, fail to
+            # load their provider, and leave rembg on the CPU without an error.
+            pip(venv, "install", "onnxruntime-gpu==1.22.0")
         except subprocess.CalledProcessError:
             pip(venv, "install", "onnxruntime")
     else:

@@ -28,19 +28,24 @@ from services.generators.base import BaseGenerator, smooth_progress, GenerationC
 
 _EXTENSION_DIR = Path(__file__).parent
 
-# One rembg session per process (creating it costs ~20 s: model load + CUDA provider init).
-_REMBG = {"session": None}
-
-
-def _rembg_remove(image, session):
-    import rembg
-    return rembg.remove(image, session=session)
+# Named explicitly: rembg's default is now bria-rmbg-2.0, which takes ~28 s on
+# CPU and ~9 GB of VRAM (too much next to TripoSG). u2net, the former default,
+# takes ~0.5 s on CPU and ~0.1 s on GPU (~850 MB).
+_REMBG_MODEL = "u2net"
+_REMBG_CUDA = ("CUDAExecutionProvider", {
+    "arena_extend_strategy": "kSameAsRequested",
+    "cudnn_conv_algo_search": "HEURISTIC",  # the default exhaustive search costs seconds per call
+})
 
 
 class TripoSGGenerator(BaseGenerator):
     MODEL_ID     = "triposg"
     DISPLAY_NAME = "TripoSG"
     VRAM_GB      = 8
+
+    # Background-removal session, created on first use and reused until unload().
+    _rembg      = None
+    _rembg_lock = threading.Lock()
 
     # ------------------------------------------------------------------ #
     # Lifecycle
@@ -75,11 +80,11 @@ class TripoSGGenerator(BaseGenerator):
         self._device = device
         self._dtype  = dtype
         print(f"[TripoSGGenerator] Loaded on {device}.")
-        self._rembg_session()
 
     def unload(self) -> None:
         self._device = None
         self._dtype  = None
+        self._rembg  = None  # releases its CUDA memory too
         super().unload()
 
     # ------------------------------------------------------------------ #
@@ -188,9 +193,18 @@ class TripoSGGenerator(BaseGenerator):
     # ------------------------------------------------------------------ #
 
     def _preprocess(self, image_bytes: bytes, fg_ratio: float) -> Image.Image:
-        image   = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
-        session = self._rembg_session()
-        image   = _rembg_remove(image, session)
+        import rembg
+
+        image = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
+        try:
+            image = rembg.remove(image, session=self._rembg_session())
+        except Exception as exc:
+            # A CUDA/cuDNN failure (or VRAM taken by TripoSG): redo this image
+            # on CPU, and keep the CPU session for the next ones.
+            print(f"[TripoSGGenerator] Background removal failed ({exc}); retrying on CPU.")
+            with self._rembg_lock:
+                self._rembg = rembg.new_session(_REMBG_MODEL, providers=["CPUExecutionProvider"])
+            image = rembg.remove(image, session=self._rembg)
 
         # Composite on white background
         bg = Image.new("RGBA", image.size, (255, 255, 255, 255))
@@ -200,19 +214,22 @@ class TripoSGGenerator(BaseGenerator):
         return self._resize_foreground(image, fg_ratio)
 
     def _rembg_session(self):
-        if _REMBG["session"] is None:
-            import rembg
-            try:
-                sess = rembg.new_session(providers=[("CUDAExecutionProvider", {
-                    "arena_extend_strategy": "kSameAsRequested", "gpu_mem_limit": 2 * 1024 ** 3,
-                    "cudnn_conv_algo_search": "HEURISTIC"}), "CPUExecutionProvider"])
-                _rembg_remove(Image.new("RGBA", (64, 64), (255, 255, 255, 255)), sess)  # warm-up / provider check
-            except Exception:
-                # cuDNN/CUDA incompatibility - fall back to CPU
-                sess = rembg.new_session(providers=["CPUExecutionProvider"])
-            print(f"[TripoSGGenerator] rembg providers: {sess.inner_session.get_providers()}")
-            _REMBG["session"] = sess
-        return _REMBG["session"]
+        """The reused background-removal session; on the GPU when TripoSG is."""
+        with self._rembg_lock:
+            if self._rembg is None:
+                import onnxruntime
+                import rembg
+
+                providers = ["CPUExecutionProvider"]
+                on_cuda   = str(self._device or "").startswith("cuda")
+                if on_cuda and "CUDAExecutionProvider" in onnxruntime.get_available_providers():
+                    providers.insert(0, _REMBG_CUDA)
+                self._rembg = rembg.new_session(_REMBG_MODEL, providers=providers)
+                # onnxruntime falls back to CPU without raising when the CUDA
+                # provider cannot load (e.g. a CUDA-major mismatch): say so.
+                print(f"[TripoSGGenerator] rembg {_REMBG_MODEL} providers: "
+                      f"{self._rembg.inner_session.get_providers()}")
+            return self._rembg
 
     def _resize_foreground(self, image: Image.Image, ratio: float) -> Image.Image:
         """Scale the subject so it occupies `ratio` of the shortest canvas side."""
